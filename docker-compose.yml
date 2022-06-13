@@ -1,0 +1,189 @@
+version: '2'
+
+services:
+
+  proxy:
+    image: jwilder/nginx-proxy
+    container_name: proxy
+    restart: unless-stopped
+    labels:
+      com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy: "true"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - certs:/etc/nginx/certs:rw
+      - vhost.d:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - ./uploadsize.conf:/etc/nginx/conf.d/uploadsize.conf:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - "default"
+      - "proxy-tier"
+
+  proxy-letsencrypt:
+    image: jrcs/letsencrypt-nginx-proxy-companion
+    container_name: letsencrypt
+    restart: unless-stopped
+    environment:
+      - NGINX_PROXY_CONTAINER=proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    volumes_from:
+      - "proxy"
+    depends_on:
+      - "proxy"
+    networks:
+      - "default"
+      - "proxy-tier"
+
+  portainer:
+    image: portainer/portainer
+    container_name: portainer
+    restart: always
+    environment:
+      - VIRTUAL_HOST=docker.slipperyjalapeno.com
+      - LETSENCRYPT_HOST=docker.slipperyjalapeno.com
+      - LETSENCRYPT_EMAIL=rob@bushkillventures.com
+    volumes:
+      - ./portainer/:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9000:9000"
+
+  mealie:
+    container_name: mealie
+    image: hkotel/mealie:latest
+    restart: always
+    ports:
+      - 9925:80
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: America/Anchorage
+      # Default Recipe Settings
+      RECIPE_PUBLIC: 'true'
+      RECIPE_SHOW_NUTRITION: 'true'
+      RECIPE_SHOW_ASSETS: 'true'
+      RECIPE_LANDSCAPE_VIEW: 'true'
+      RECIPE_DISABLE_COMMENTS: 'false'
+      RECIPE_DISABLE_AMOUNT: 'false'
+      # proxy/letsencrypt
+      VIRTUAL_HOST: 'mealie.slipperyjalapeno.com'
+      LETSENCRYPT_HOST: 'mealie.slipperyjalapeno.com'
+      LEYSENCRYPT_EMAIL: 'rob@bushkillventures.com'
+      # Gunicorn
+      # WEB_CONCURRENCY: 2
+      # WORKERS_PER_CORE: 0.5
+      # MAX_WORKERS: 8
+    volumes:
+      - ./mealie/data/:/app/data
+
+  calibre-web:
+    image: lscr.io/linuxserver/calibre-web
+    container_name: calibre-web
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - DOCKER_MODS=linuxserver/calibre-web:calibre #optional
+      - OAUTHLIB_RELAX_TOKEN_SCOPE=1 #optional
+      - VIRTUAL_HOST=calibre-web.slipperyjalapeno.com
+      - LETSENCRYPT_HOST=calibre-web.slipperyjalapeno.com
+      - LETSENCRYPT_EMAIL=rob@bushkillventures.com
+    volumes:
+      - ./calibre-web/data:/config
+      - ./calibre-web/library:/books
+    ports:
+      - 8083:8083
+    restart: unless-stopped
+
+  audiobookshelf:
+    image: advplyr/audiobookshelf
+    container_name: audiobookshelf
+    environment:
+      AUDIOBOOKSHELF_UID: 99
+      AUDIOBOOKSHELF_GID: 100
+      VIRTUAL_HOST: 'audio.slipperyjalapeno.com'
+      LETSENCRYPT_HOST: 'audio.slipperyjalapeno.com'
+      LETSENCRYPT_EMAIL: 'rob@bushkillventures.com'
+    ports:
+      - 13378:80
+    volumes:
+      - ./audiobooks/config:/config
+      - ./audiobooks/library:/audiobooks
+      - ./audiobooks/metadata:/metadata
+    restart: unless-stopped
+
+  syncthing:
+    image: lscr.io/linuxserver/syncthing
+    container_name: syncthing
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - VIRTUAL_HOST=sync.slipperyjalapeno.com
+      - LETSENCRYPT_HOST=sync.slipperyjalapeno.com
+      - LETSENCRYPT_EMAIL=rob@bushkillventures.com
+    volumes:
+      - ./syncthing/config:/config
+      - ./syncthing/data1:/data1
+      - ./syncthing/data2:/data2
+      - ./calibre-web/library:/books
+    ports:
+      - 8384:8384
+      - 22000:22000/tcp
+      - 22000:22000/udp
+      - 21027:21027/udp
+    restart: unless-stopped
+
+  wordpress:
+    image: wordpress
+    links:
+      - mariadb:mysql
+    environment:
+      - WORDPRESS_DB_PASSWORD=lickity!12461
+      - WORDPRESS_DB_USER=root
+      - VIRTUAL_HOST=lickitylogsplitter.com
+      - LETSENCRYPT_HOST=lickitylogsplitter.com
+      - LETSENCRYPT_EMAIL=rob@bushkillventures.com
+    ports:
+      - 8080:80
+    volumes:
+      - ./html:/var/www/html
+  mariadb:
+    image: mariadb
+    environment:
+      - MYSQL_ROOT_PASSWORD=lickity!12461
+      - MYSQL_DATABASE=wordpress
+    volumes:
+      - ./database:/var/lib/mysql
+
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: always
+    environment:
+      - WEBSOCKET_ENABLED=true
+      - EMAIL_EXPIRATION_TIME=600
+      - SIGNUPS_ALLOWED=true
+      - SIGNUPS_VERIFY=true
+      - SIGNUPS_VERIFY_RESEND_TIME=3600
+      - SIGNUPS_VERIFY_RESEND_LIMIT=6
+      - ADMIN_TOKEN=<>
+      - INVITATIONS_ALLOWED=true
+      - INVITATION_ORG_NAME=<>
+      - VIRTUAL_HOST=vault.slipperyjalapeno.com
+      - LETSENCRYPT_HOST=vault.slipperyjalapeno.com
+      - LETSENCRYPT_EMAIL=rob@bushkillventures.com
+    volumes:
+      - ./vw-data:/data
+
+volumes:
+  certs:
+  vhost.d:
+  html:
+
+networks:
+  proxy-tier:
+
